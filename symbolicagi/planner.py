@@ -1,0 +1,166 @@
+# symbolic_agi/planner.py
+
+import json
+import logging
+from typing import Any, Dict, Optional
+
+from .recursive_introspector import RecursiveIntrospector
+from .schemas import ActionStep, GoalMode, PlannerOutput
+from .skill_manager import SkillManager
+from .tool_plugin import ToolPlugin
+from .agent_pool import DynamicAgentPool
+
+class Planner:
+    """
+    A dedicated class for creating and repairing plans for the AGI.
+    It uses an introspector to reason about goals and available capabilities.
+    """
+    def __init__(
+        self,
+        introspector: RecursiveIntrospector,
+        skill_manager: SkillManager,
+        agent_pool: DynamicAgentPool,
+        tool_plugin: ToolPlugin
+    ):
+        self.introspector = introspector
+        self.skills = skill_manager
+        self.agent_pool = agent_pool
+        self.tools = tool_plugin
+
+    async def decompose_goal_into_plan(
+        self, 
+        goal_description: str, 
+        file_manifest: str,
+        mode: GoalMode = 'code',
+        failure_context: Optional[Dict[str, Any]] = None
+    ) -> PlannerOutput:
+        """
+        Uses an LLM to generate a plan, then validates and repairs it to ensure it is always valid JSON.
+        """
+        
+        available_skills = self.skills.get_formatted_definitions()
+        persona_prompt = self.agent_pool.get_persona_capabilities_prompt()
+        
+        docs_only_tools = """
+- 'read_file', 'write_file', 'list_files', 'read_core_file', 'analyze_data', 'read_own_source_code', 'web_search', 'browse_webpage'
+"""
+        code_allowed_tools = """
+- 'read_file', 'write_file', 'list_files', 'read_core_file', 'analyze_data', 'read_own_source_code', 'execute_python_code', 'web_search', 'browse_webpage'
+"""
+        
+        orchestrator_tools_prompt = f"""
+The 'orchestrator' persona can use the following tools directly:
+{docs_only_tools if mode == 'docs' else code_allowed_tools}
+"""
+
+        response_format = '{"thought": "...", "plan": [{"action": "...", "parameters": {}, "assigned_persona": "..."}]}'
+
+        if failure_context:
+            logging.critical(f"REPLANNING for goal: '{goal_description}'")
+            # --- UPGRADE: More forceful and specific replanning instructions ---
+            master_prompt = f"""
+You are an expert troubleshooter AGI. A previous attempt to achieve a goal failed. Your task is to analyze the failure and create a new, corrected plan.
+
+--- ORIGINAL GOAL ---
+{goal_description}
+
+--- FAILED PLAN CONTEXT ---
+{json.dumps(failure_context, indent=2)}
+
+--- AVAILABLE CAPABILITIES ---
+{persona_prompt}
+{available_skills}
+{orchestrator_tools_prompt}
+
+--- AVAILABLE FILES ---
+{file_manifest}
+
+--- INSTRUCTIONS ---
+1.  **Analyze**: The previous plan failed. The error message was: "{failure_context.get('error_message', 'N/A')}". This means you used the wrong tool or the wrong parameters.
+2.  **Correction Rule**: To read a core configuration file like `consciousness_profile.json`, you MUST use the `read_core_file` tool. To read a file in the workspace, you MUST use the `read_file` tool.
+3.  **New Strategy**: Your new plan MUST start with the correct tool to read the required file. Then, it MUST use the `analyze_data` tool to extract the necessary information.
+4.  **Respond**: Decompose the corrected approach into a JSON array of action steps. Respond ONLY with the raw JSON object: {response_format}
+"""
+        else:
+            logging.info(f"Decomposing goal: '{goal_description}'")
+            # --- UPGRADE: More directive instructions for the initial plan ---
+            master_prompt = f"""
+You are a master project manager AGI. Your task is to decompose a high-level goal into a series of concrete, logical steps.
+
+# GOAL MODE: {mode.upper()}
+{'You are in "docs" mode. You MUST NOT use the "write_code" or "execute_python_code" actions.' if mode == 'docs' else ''}
+
+# AVAILABLE CAPABILITIES
+{persona_prompt}
+{available_skills}
+{orchestrator_tools_prompt}
+
+# AVAILABLE FILES
+{file_manifest}
+
+# MANDATORY LOGIC FOR FILE ANALYSIS
+To answer a question about a file, you MUST follow this exact two-step process:
+1.  Use `read_file` (for workspace files) or `read_core_file` (for config files) to get the file's content.
+2.  Use `analyze_data` with the `data` parameter set to the key `content` and a `query` to extract the specific information. The output of `analyze_data` is then available in the workspace under the key "answer".
+
+Goal: "{goal_description}"
+
+--- INSTRUCTIONS ---
+1.  **Think**: First, write a step-by-step "thought" process for how you will achieve the goal, following the mandatory logic above.
+2.  **Plan**: Based on your thought process, create a JSON array of action steps.
+3.  **Respond**: Format your entire response as a single JSON object: {response_format}
+"""
+        plan_str = ""
+        planner_output_dict: Optional[Dict[str, Any]] = None
+        for attempt in range(2):
+            try:
+                if attempt == 0:
+                    plan_str = await self.introspector.llm_reflect(master_prompt)
+                else:
+                    logging.warning(f"Malformed JSON response detected. Attempting repair on: {plan_str[:200]}")
+                    forceful_prompt = f"""
+The following text is NOT valid JSON.
+--- BROKEN TEXT ---
+{plan_str}
+---
+FIX THIS. Respond ONLY with the corrected, raw JSON object in the format {response_format}.
+"""
+                    plan_str = await self.introspector.llm_reflect(forceful_prompt)
+
+                if "```json" in plan_str:
+                    plan_str = plan_str.partition("```json")[2].partition("```")[0]
+                
+                planner_output_dict = json.loads(plan_str)
+                break
+
+            except json.JSONDecodeError as e:
+                if attempt < 1:
+                    continue
+                else:
+                    logging.error(f"Final repair attempt failed to produce valid JSON: {e}. Response was: {plan_str}")
+                    return PlannerOutput(thought="Failed to generate a valid plan.", plan=[])
+        
+        if planner_output_dict is None:
+            return PlannerOutput(thought="Planner returned no output.", plan=[])
+
+        try:
+            validated_plan = [ActionStep.model_validate(item) for item in planner_output_dict.get("plan", [])]
+            thought = planner_output_dict.get("thought", "No thought recorded.")
+            
+            if validated_plan and failure_context is None:
+                logging.info(f"Plan generated with {len(validated_plan)} steps. Adding QA review step.")
+                review_step = ActionStep(
+                    action="review_plan",
+                    parameters={
+                        "original_goal": goal_description,
+                        "plan_to_review": [step.model_dump() for step in validated_plan]
+                    },
+                    assigned_persona="qa"
+                )
+                return PlannerOutput(thought=thought, plan=[review_step] + validated_plan)
+            
+            return PlannerOutput(thought=thought, plan=validated_plan)
+
+        except Exception as e:
+            logging.error(f"Failed to validate repaired plan structure: {e}")
+            return PlannerOutput(thought=f"Failed to validate plan structure: {e}", plan=[])
