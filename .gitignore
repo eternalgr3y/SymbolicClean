@@ -1,0 +1,43 @@
+# Explicitly ignore Python caches and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+
+# Explicitly ignore venv and Poetry environments
+.venv/
+venv/
+env/
+ENV/
+.poetry/
+poetry.lock
+
+# Explicitly ignore logs and temporary data
+*.log
+agi_session.log
+logs/
+data/
+*.json
+*.sqlite
+*.db
+
+# Explicitly ignore VS Code config files
+.vscode/
+
+# Explicitly ignore Docker files clearly
+*.dockerignore
+docker-compose.override.yml
+
+# Explicitly ignore OS-specific garbage
+.DS_Store
+Thumbs.db
+
+# Explicitly ignore pytest cache
+.pytest_cache/
+
+# Explicitly ignore Jupyter notebooks checkpoints if ever used
+.ipynb_checkpoints
+
+# Explicitly ignore Playwright browser binaries
+playwright-report/
