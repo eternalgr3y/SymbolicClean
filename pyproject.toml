@@ -16,6 +16,7 @@ pydantic = "^2.7.1"
 aiofiles = "^23.2.1"
 faiss-cpu = "^1.8.0"
 beautifulsoup4 = "^4.13.4"
+duckduckgo-search = "^8.1.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.1"
