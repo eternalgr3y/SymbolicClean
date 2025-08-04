@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "SymbolicAGI"
 version = "0.1.0"
-description = "Modular, self-improving AGI framework built on symbolic reasoning and cognitive loops."
+description = "Modular, self-improving AGI framework built on symbolic reasoning, cognitive loops, and foot-slave humiliation."
 authors = ["Todd <youremail@example.com>"]
 packages = [{ include = "symbolic_agi" }]
 
@@ -13,15 +13,17 @@ playwright = "^1.44.0"
 fastapi = "^0.111.0"
 uvicorn = "^0.29.0"
 pydantic = "^2.7.1"
-aiofiles = "^24.1.0"
+aiofiles = "^23.2.1"
+faiss-cpu = "^1.8.0"
+beautifulsoup4 = "^4.13.4"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.2.0"
-black = "^24.4.2"
-isort = "^5.13.2"
+pytest = "^8.4.1"
+black = "^25.1.0"
+isort = "^6.0.1"
 ruff = "^0.4.7"
-mypy = "^1.10.0"
-pre-commit = "^3.7.1"
+mypy = "^1.17.1"
+pre-commit = "^4.2.0"
 
 [build-system]
 requires = ["poetry-core"]
