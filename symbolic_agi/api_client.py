@@ -14,8 +14,7 @@ def get_openai_client() -> AsyncOpenAI:
     It's recommended to use a single client instance for the application's lifetime
     as it manages underlying connection pools.
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    if not (api_key := os.getenv("OPENAI_API_KEY")):
         raise ValueError("OPENAI_API_KEY environment variable not set.")
     
     return AsyncOpenAI(api_key=api_key)

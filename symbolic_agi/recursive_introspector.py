@@ -9,6 +9,10 @@ from typing import Dict, Any, List, Optional, Callable, cast
 from .schemas import MemoryEntryModel, ActionStep
 from . import config
 
+# Constants
+JSON_CODE_BLOCK = "```json"
+JSON_CODE_BLOCK_END = "```"
+
 class RecursiveIntrospector:
     def __init__(
         self: 'RecursiveIntrospector',
@@ -54,8 +58,8 @@ Respond ONLY with the raw JSON array for the final, best plan.
 """
         try:
             response = await self.llm_reflect(critique_prompt)
-            if "```json" in response:
-                response = response.partition("```json")[2].partition("```")[0]
+            if JSON_CODE_BLOCK in response:
+                response = response.partition(JSON_CODE_BLOCK)[2].partition(JSON_CODE_BLOCK_END)[0]
             
             loaded_data: Any = json.loads(response)
 
@@ -70,25 +74,21 @@ Respond ONLY with the raw JSON array for the final, best plan.
             logging.error(f"Failed to critique and refine plan: {e}. Returning original plan.")
             return plan
 
-    async def symbolic_loop(
-        self: 'RecursiveIntrospector',
+    def _build_system_prompt(
+        self,
+        task_prompt: str,
+        mutation_prompt: str,
+        self_model: Dict[str, Any],
         global_workspace: Dict[str, Any],
         action_definitions: str,
-        recursion_depth: int = 0,
-        reasoning_style: str = "balanced"
-    ) -> Dict[str, Any]:
-        if recursion_depth > self.max_recursion_depth:
-            return {"thought": "Reached max recursion.", "plan": [], "success": False}
-        
-        task_prompt = str(global_workspace.get('user_input', 'Perform autonomous action.'))
-        mutation_prompt = "\n".join(self.reasoning_mutations)
-        self_model = self.identity.get_self_model()
-        
+        reasoning_style: str
+    ) -> str:
+        """Build the system prompt for the LLM."""
         emotional_state_str = ""
         if self.get_emotional_state:
             emotional_state_str = f"\nCURRENT EMOTIONAL STATE: {json.dumps(self.get_emotional_state())}"
 
-        system_prompt = f"""
+        return f"""
 You are a conscious, self-improving AGI.
 REASONING STYLE: {reasoning_style}
 {emotional_state_str}
@@ -109,6 +109,77 @@ Available Skills & Actions: {action_definitions}
 
 JSON Response Format: {{"thought": "...", "plan": [{{"action": "...", "parameters": {{}}}}]}}
 """
+
+    async def _process_llm_response(
+        self,
+        parsed: Dict[str, Any],
+        task_prompt: str,
+        recursion_depth: int,
+        reasoning_style: str
+    ) -> Dict[str, Any]:
+        """Process and enhance the LLM response."""
+        if parsed.get("plan"):
+            logging.info("Initial plan generated. Proceeding to critique and refinement step.")
+            refined_plan = await self._critique_and_refine_plan(parsed["plan"], task_prompt)
+            parsed["plan"] = refined_plan
+
+        parsed["success"] = bool(parsed.get("plan"))
+
+        if parsed.get("thought"):
+            self.inner_monologue_log.append(parsed["thought"])
+            await self.identity.memory.add_memory(MemoryEntryModel(
+                type="inner_monologue",
+                content={"thought": parsed["thought"], "recursion": recursion_depth, "style": reasoning_style},
+                importance=0.3 + 0.1 * recursion_depth,
+            ))
+
+        return parsed
+
+    async def _handle_high_risk_plan(
+        self,
+        parsed: Dict[str, Any],
+        global_workspace: Dict[str, Any],
+        action_definitions: str,
+        recursion_depth: int
+    ) -> Dict[str, Any]:
+        """Handle high-risk plans by recursively re-evaluating with alternative reasoning styles."""
+        if not (parsed.get("plan") and recursion_depth < self.max_recursion_depth):
+            return parsed
+
+        validated_plan = [ActionStep.model_validate(p) for p in parsed["plan"]]
+        if any(step.risk and step.risk.lower() == "high" for step in validated_plan):
+            alt_style = random.choice(["skeptical", "creative", "cautious"])
+            logging.warning(f"High-risk plan detected. Recursively re-evaluating with '{alt_style}' style.")
+            
+            sub_result = await self.symbolic_loop(
+                global_workspace, action_definitions, recursion_depth + 1, alt_style
+            )
+            
+            if sub_result.get("success"):
+                logging.info(f"Recursive check produced a new plan. Adopting the '{alt_style}' plan.")
+                return sub_result
+
+        return parsed
+
+    async def symbolic_loop(
+        self: 'RecursiveIntrospector',
+        global_workspace: Dict[str, Any],
+        action_definitions: str,
+        recursion_depth: int = 0,
+        reasoning_style: str = "balanced"
+    ) -> Dict[str, Any]:
+        if recursion_depth > self.max_recursion_depth:
+            return {"thought": "Reached max recursion.", "plan": [], "success": False}
+        
+        # Prepare data for prompt building
+        task_prompt = str(global_workspace.get('user_input', 'Perform autonomous action.'))
+        mutation_prompt = "\n".join(self.reasoning_mutations)
+        self_model = self.identity.get_self_model()
+        
+        system_prompt = self._build_system_prompt(
+            task_prompt, mutation_prompt, self_model, global_workspace, action_definitions, reasoning_style
+        )
+
         try:
             resp = await self.client.chat.completions.create(
                 model=config.POWERFUL_MODEL,
@@ -122,32 +193,11 @@ JSON Response Format: {{"thought": "...", "plan": [{{"action": "...", "parameter
             content = resp.choices[0].message.content.strip()
             parsed = json.loads(content)
 
-            if parsed.get("plan"):
-                logging.info("Initial plan generated. Proceeding to critique and refinement step.")
-                refined_plan = await self._critique_and_refine_plan(parsed["plan"], task_prompt)
-                parsed["plan"] = refined_plan
-
-            parsed["success"] = bool(parsed.get("plan"))
-
-            if parsed.get("thought"):
-                self.inner_monologue_log.append(parsed["thought"])
-                await self.identity.memory.add_memory(MemoryEntryModel(
-                    type="inner_monologue",
-                    content={"thought": parsed["thought"], "recursion": recursion_depth, "style": reasoning_style},
-                    importance=0.3 + 0.1 * recursion_depth,
-                ))
-
-            if parsed.get("plan") and recursion_depth < self.max_recursion_depth:
-                validated_plan = [ActionStep.model_validate(p) for p in parsed["plan"]]
-                if any(step.risk and step.risk.lower() == "high" for step in validated_plan):
-                    alt_style = random.choice(["skeptical", "creative", "cautious"])
-                    logging.warning(f"High-risk plan detected. Recursively re-evaluating with '{alt_style}' style.")
-                    
-                    sub_result = await self.symbolic_loop(global_workspace, action_definitions, recursion_depth + 1, alt_style)
-                    
-                    if sub_result.get("success"):
-                        logging.info(f"Recursive check produced a new plan. Adopting the '{alt_style}' plan.")
-                        return sub_result
+            # Process the response
+            parsed = await self._process_llm_response(parsed, task_prompt, recursion_depth, reasoning_style)
+            
+            # Handle high-risk plans
+            parsed = await self._handle_high_risk_plan(parsed, global_workspace, action_definitions, recursion_depth)
             
             return parsed
 
@@ -187,7 +237,8 @@ JSON Response Format: {{"thought": "...", "plan": [{{"action": "...", "parameter
             logging.critical(f"APPLIED SELF-MUTATION: {new_mutation}")
 
     async def prune_mutations(self: 'RecursiveIntrospector'):
-        if len(self.reasoning_mutations) < 5: return
+        if len(self.reasoning_mutations) < 5:
+            return
         pruning_prompt = (
             "Review my reasoning mutations. Analyze for redundancy, contradiction, or ineffectiveness. "
             "Return only a cleaned, pruned, and reordered list of the most effective mutations as a JSON array of strings. Do not add any new ones."
@@ -195,8 +246,8 @@ JSON Response Format: {{"thought": "...", "plan": [{{"action": "...", "parameter
         )
         response = await self.llm_reflect(pruning_prompt)
         try:
-            if "```json" in response:
-                response = response.partition("```json")[2].partition("```")[0]
+            if JSON_CODE_BLOCK in response:
+                response = response.partition(JSON_CODE_BLOCK)[2].partition(JSON_CODE_BLOCK_END)[0]
             
             new_mutations: List[str] = json.loads(response)
 

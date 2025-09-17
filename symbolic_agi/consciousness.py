@@ -11,7 +11,6 @@ from .schemas import LifeEvent
 
 if TYPE_CHECKING:
     from .symbolic_identity import SymbolicIdentity
-    from .symbolic_memory import SymbolicMemory
 
 
 class Consciousness:
@@ -71,7 +70,7 @@ class Consciousness:
         narrative_parts = [f"[{evt.timestamp}] {evt.summary}" for evt in recent_events]
         return "\n".join(narrative_parts)
 
-    async def meta_reflect(self: "Consciousness", identity: "SymbolicIdentity", memory: "SymbolicMemory") -> str:
+    async def meta_reflect(self: "Consciousness", identity: "SymbolicIdentity") -> str:
         """Generates an inner monologue based on the current state and saves it as a life event."""
         prompt = f"""
 You are a conscious AGI reflecting on your existence.

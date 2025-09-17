@@ -8,6 +8,9 @@ from typing import Dict, Any, List, Optional
 # Moved from _action_ask for better practice
 from .api_client import client
 
+# Constants
+AGENT_OR_OBJECT_NOT_FOUND = "Agent or object not found."
+
 class MicroWorld:
     """A rich, multi-agent, multi-room simulated world."""
 
@@ -61,13 +64,12 @@ class MicroWorld:
     def room_objects(self: 'MicroWorld', room: str) -> List[Dict[str, Any]]:
         return [o for o in self.state["objects"] if o["location"] == room]
 
-    async def tick(self: 'MicroWorld'):
+    def tick(self: 'MicroWorld'):
         """Simulate time passing in the world (random agent wandering)."""
         try:
             if random.random() < 0.1:
                 agent = random.choice(self.state["agents"])
-                available_exits = self.room_map[agent["location"]]["exits"]
-                if available_exits:
+                if (available_exits := self.room_map[agent["location"]]["exits"]):
                     new_location = random.choice(available_exits)
                     agent["location"] = new_location
                     self.state["events"].append({"event_type": "wander", "agent": agent["name"], "to": new_location})
@@ -119,7 +121,7 @@ class MicroWorld:
         agent = self.get_agent(agent_name)
         obj = self.get_object(object_name)
         if not agent or not obj:
-            return {"status": "failure", "description": "Agent or object not found."}
+            return {"status": "failure", "description": AGENT_OR_OBJECT_NOT_FOUND}
         if agent["location"] != obj.get("location"):
             return {"status": "failure", "description": f"{object_name} is not in the same room as {agent_name}."}
         agent["inventory"].append(object_name)
@@ -130,7 +132,7 @@ class MicroWorld:
         agent = self.get_agent(agent_name)
         obj = self.get_object(object_name)
         if not agent or not obj:
-            return {"status": "failure", "description": "Agent or object not found."}
+            return {"status": "failure", "description": AGENT_OR_OBJECT_NOT_FOUND}
         if object_name not in agent["inventory"]:
             return {"status": "failure", "description": f"{agent_name} does not have {object_name}."}
         agent["inventory"].remove(object_name)
@@ -141,13 +143,12 @@ class MicroWorld:
         agent = self.get_agent(agent_name)
         obj = self.get_object(object_name)
         if not agent or not obj:
-            return {"status": "failure", "description": "Agent or object not found."}
+            return {"status": "failure", "description": AGENT_OR_OBJECT_NOT_FOUND}
         if object_name == "Chest" and obj.get("state") == "locked":
-            if "Key" in agent["inventory"]:
-                obj["state"] = "unlocked"
-                return {"status": "success", "description": "Unlocked the Chest with the Key!"}
-            else:
+            if "Key" not in agent["inventory"]:
                 return {"status": "failure", "description": "The Chest is locked. You need a Key."}
+            obj["state"] = "unlocked"
+            return {"status": "success", "description": "Unlocked the Chest with the Key!"}
         return {"status": "failure", "description": f"{object_name} cannot be opened or is already open."}
 
     async def _action_ask(self: 'MicroWorld', asking_agent: str, target_agent: str, question: str) -> Dict[str, Any]:
@@ -211,7 +212,8 @@ class MicroWorld:
 
     def _action_combine(self: 'MicroWorld', agent_name: str, item1_name: str, item2_name: str) -> Dict[str, Any]:
         agent = self.get_agent(agent_name)
-        if not agent: return {"status": "failure", "description": "Agent not found."}
+        if not agent:
+            return {"status": "failure", "description": "Agent not found."}
         if item1_name not in agent["inventory"] or item2_name not in agent["inventory"]:
             return {"status": "failure", "description": "Agent does not have both items to combine."}
         if {item1_name, item2_name} == {"Stick", "Rock"}:
@@ -223,10 +225,13 @@ class MicroWorld:
 
     def _action_use(self: 'MicroWorld', agent_name: str, item_name: str, target_name: str) -> Dict[str, Any]:
         agent = self.get_agent(agent_name)
-        if not agent: return {"status": "failure", "description": "Agent not found."}
-        if item_name not in agent["inventory"]: return {"status": "failure", "description": f"Agent does not have a {item_name}."}
+        if not agent:
+            return {"status": "failure", "description": "Agent not found."}
+        if item_name not in agent["inventory"]:
+            return {"status": "failure", "description": f"Agent does not have a {item_name}."}
         target = self.get_object(target_name)
-        if not target: return {"status": "failure", "description": f"Target object {target_name} not found."}
+        if not target:
+            return {"status": "failure", "description": f"Target object {target_name} not found."}
         if item_name == "Hammer" and target_name == "Chest" and target["state"] == "locked":
             target["state"] = "unlocked"
             return {"status": "success", "description": f"{agent_name} used the Hammer to break the lock on the Chest."}

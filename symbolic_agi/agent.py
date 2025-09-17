@@ -12,6 +12,9 @@ from .schemas import MessageModel
 if TYPE_CHECKING:
     from .message_bus import MessageBus
 
+# Constants
+NO_CONTENT_ERROR = "No content returned from LLM."
+
 class Agent:
     def __init__(self, name: str, message_bus: "MessageBus", api_client: AsyncOpenAI):
         self.name = name
@@ -44,7 +47,7 @@ class Agent:
             except asyncio.CancelledError:
                 self.running = False
                 logging.info(f"Agent '{self.name}' received cancel signal.")
-                break
+                raise  # Re-raise CancelledError after cleanup
         logging.info(f"Agent '{self.name}' has shut down.")
 
     async def handle_message(self, message: MessageModel):
@@ -106,8 +109,7 @@ Respond ONLY with the valid JSON object.
             if resp.choices and resp.choices[0].message.content:
                 review_data = json.loads(resp.choices[0].message.content)
                 return {"status": "success", **review_data}
-            else:
-                return {"status": "failure", "error": "No content returned from LLM."}
+            return {"status": "failure", "error": NO_CONTENT_ERROR}
         except Exception as e:
             return {"status": "failure", "error": str(e)}
 
@@ -122,13 +124,12 @@ Respond ONLY with the valid JSON object.
         try:
             resp = await self.client.chat.completions.create(model="gpt-4.1", messages=[{"role": "system", "content": llm_prompt}])
             content = resp.choices[0].message.content
-            if content is not None:
-                code = content.strip()
-                if "```python" in code:
-                    code = code.split("```python")[1].split("```")[0].strip()
-                return {"status": "success", "generated_code": code}
-            else:
-                return {"status": "failure", "error": "No content returned from LLM."}
+            if content is None:
+                return {"status": "failure", "error": NO_CONTENT_ERROR}
+            code = content.strip()
+            if "```python" in code:
+                code = code.split("```python")[1].split("```")[0].strip()
+            return {"status": "success", "generated_code": code}
         except Exception as e:
             return {"status": "failure", "error": str(e)}
 
@@ -139,11 +140,10 @@ Respond ONLY with the valid JSON object.
         try:
             resp = await self.client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": llm_prompt}])
             content = resp.choices[0].message.content
-            if content is not None:
-                summary = content.strip()
-                return {"status": "success", "research_summary": summary}
-            else:
-                return {"status": "failure", "error": "No content returned from LLM."}
+            if content is None:
+                return {"status": "failure", "error": NO_CONTENT_ERROR}
+            summary = content.strip()
+            return {"status": "success", "research_summary": summary}
         except Exception as e:
             return {"status": "failure", "error": str(e)}
 
@@ -156,10 +156,9 @@ Respond ONLY with the valid JSON object.
         try:
             resp = await self.client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": llm_prompt}])
             content = resp.choices[0].message.content
-            if content is not None:
-                review = content.strip()
-                return {"status": "success", "code_review": review}
-            else:
-                return {"status": "failure", "error": "No content returned from LLM."}
+            if content is None:
+                return {"status": "failure", "error": NO_CONTENT_ERROR}
+            review = content.strip()
+            return {"status": "success", "code_review": review}
         except Exception as e:
             return {"status": "failure", "error": str(e)}

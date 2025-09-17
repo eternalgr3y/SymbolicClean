@@ -1,0 +1,7 @@
+# docs/curriculum.yaml
+idle_goals:
+  - "Do a web search for 'AI news today', open one article, summarize to workspace."
+  - "Open 'symbolic_agi/tool_plugin.py', propose a refactor note."
+  - "Use skill 'LoginSauceDemo' and take a screenshot."
+  - "Use skill 'SauceDemoLoginAndScrape' and produce a fresh CSV."
+  - "Search 'best Python testing tips' and write a 10-bullet cheatsheet."

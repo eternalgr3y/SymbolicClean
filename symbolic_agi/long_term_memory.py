@@ -63,10 +63,7 @@ class LongTermMemory:
 
     def get_active_goal(self) -> Optional[GoalModel]:
         """Finds and returns the first active goal."""
-        for goal in self.goals.values():
-            if goal.status == 'active':
-                return goal
-        return None
+        return next((goal for goal in self.goals.values() if goal.status == 'active'), None)
 
     def update_goal_status(self, goal_id: str, status: GoalStatus):
         """Updates the status of a specific goal and archives it if completed or failed."""

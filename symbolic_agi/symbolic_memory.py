@@ -65,8 +65,8 @@ class SymbolicMemory:
         new_index = faiss.IndexFlatL2(config.EMBEDDING_DIM)
         
         embedding_list: List[np.ndarray] = [
-            np.array(m.embedding, dtype=np.float32) # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
-            for m in self.memory_data if m.embedding is not None # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            np.array(embedding, dtype=np.float32) # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            for m in self.memory_data if (embedding := m.embedding) is not None # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
         ]
         
         if embedding_list:
@@ -124,7 +124,7 @@ class SymbolicMemory:
         for mem in sorted(memories_to_consolidate, key=lambda m: m.timestamp):
             content_summary = json.dumps(mem.content)
             if len(content_summary) > 150:
-                content_summary = content_summary[:147] + "..."
+                content_summary = f"{content_summary[:147]}..."
             narrative_parts.append(f"[{mem.timestamp}] ({mem.type}, importance: {mem.importance:.2f}): {content_summary}")
             ids_to_remove.add(mem.id)
             total_importance += mem.importance

@@ -45,9 +45,11 @@ class DynamicAgentPool:
             'qa': "action must be 'review_code'.",
             'orchestrator': "action can be 'create_long_term_goal_with_sub_tasks' or 'respond_to_user'."
         }
-        available_personas: List[str] = sorted(list(set(agent['persona'] for agent in self.get_all())))
+        available_personas: List[str] = sorted({agent['persona'] for agent in self.get_all()})
         prompt_lines: List[str] = ["The available personas and their valid actions are:"]
-        for persona in available_personas:
-            if persona in persona_actions:
-                prompt_lines.append(f"- '{persona}': {persona_actions[persona]}")
+        prompt_lines.extend(
+            f"- '{persona}': {persona_actions[persona]}"
+            for persona in available_personas
+            if persona in persona_actions
+        )
         return "\n".join(prompt_lines)
